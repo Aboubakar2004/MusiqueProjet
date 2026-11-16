@@ -39,7 +39,9 @@
     let widget = null;
     let sounds = [];
 
-    // Accepte un simple pseudo (→ /likes) ou une URL SoundCloud complète
+    // Accepte un simple pseudo (→ /likes) ou une URL SoundCloud complète.
+    // Résultat du test (2026-11-16) : le widget IGNORE /likes (et /favorites) et affiche
+    // les titres publiés par l'utilisateur. Seule une URL de playlist publique fonctionne.
     function buildSoundCloudUrl(input) {
       const v = input.trim();
       if (v.startsWith('http')) return v;
@@ -73,8 +75,17 @@
           const t = toTrack(s);
           const min = Math.floor(t.durationMs / 60000);
           const sec = String(Math.floor((t.durationMs % 60000) / 1000)).padStart(2, '0');
-          li.innerHTML = `<img src="${t.artworkUrl || ''}" alt="" />
-            <span><a href="${t.url}" target="_blank">${t.title}</a> : ${t.artist} (${min}:${sec})</span>`;
+          // textContent plutôt que innerHTML : un titre contenant du HTML ne sera pas interprété
+          const img = document.createElement('img');
+          img.src = t.artworkUrl || '';
+          img.alt = '';
+          const a = document.createElement('a');
+          a.href = t.url;
+          a.target = '_blank';
+          a.textContent = t.title;
+          const span = document.createElement('span');
+          span.append(a, ` : ${t.artist} (${min}:${sec})`);
+          li.append(img, span);
         }
         $('list').appendChild(li);
       });
