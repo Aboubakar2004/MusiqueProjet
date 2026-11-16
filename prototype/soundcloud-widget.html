@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prototype SoundCloud Widget</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+    input { padding: 6px; width: 220px; }
+    button { padding: 6px 12px; margin-left: 4px; }
+    #status { margin: 12px 0; font-weight: bold; }
+    li { display: flex; gap: 10px; align-items: center; margin: 6px 0; }
+    img { width: 40px; height: 40px; object-fit: cover; background: #ddd; }
+    .missing { color: #999; font-style: italic; }
+    /* Le widget est "caché" : présent dans la page mais invisible */
+    #sc-frame { width: 1px; height: 1px; opacity: 0; position: absolute; left: -9999px; }
+    #sc-frame.visible { width: 100%; height: 400px; opacity: 1; position: static; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>Prototype : likes SoundCloud via Widget API</h1>
+
+  <label>URL ou pseudo :
+    <input id="source" placeholder="ton-pseudo ou URL de playlist" />
+  </label>
+  <button id="load">Charger</button>
+  <button id="more" disabled>Charger plus</button>
+  <label><input type="checkbox" id="debug" /> Afficher le widget</label>
+
+  <div id="status">En attente…</div>
+  <ol id="list"></ol>
+
+  <iframe id="sc-frame" allow="autoplay"></iframe>
+
+  <!-- Script officiel du Widget API SoundCloud -->
+  <script src="https://w.soundcloud.com/player/api.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let widget = null;
+    let sounds = [];
+
+    // Accepte un simple pseudo (→ /likes) ou une URL SoundCloud complète
+    function buildSoundCloudUrl(input) {
+      const v = input.trim();
+      if (v.startsWith('http')) return v;
+      return `https://soundcloud.com/${v}/likes`;
+    }
+
+    // Convertit un "sound" SoundCloud vers notre futur format commun Track
+    function toTrack(s) {
+      return {
+        id: `sc:${s.id}`,
+        source: 'soundcloud',
+        title: s.title,
+        artist: s.user ? s.user.username : undefined,
+        durationMs: s.duration,
+        artworkUrl: s.artwork_url || (s.user && s.user.avatar_url),
+        url: s.permalink_url,
+      };
+    }
+
+    function render() {
+      // Le widget peut renvoyer des titres "incomplets" (juste un id) pas encore chargés
+      const complete = sounds.filter((s) => s.title);
+      $('status').textContent =
+        `${sounds.length} titres trouvés, dont ${complete.length} avec leurs infos complètes.`;
+      $('list').innerHTML = '';
+      sounds.forEach((s) => {
+        const li = document.createElement('li');
+        if (!s.title) {
+          li.innerHTML = `<span class="missing">id ${s.id} : infos pas encore chargées</span>`;
+        } else {
+          const t = toTrack(s);
+          const min = Math.floor(t.durationMs / 60000);
+          const sec = String(Math.floor((t.durationMs % 60000) / 1000)).padStart(2, '0');
+          li.innerHTML = `<img src="${t.artworkUrl || ''}" alt="" />
+            <span><a href="${t.url}" target="_blank">${t.title}</a> : ${t.artist} (${min}:${sec})</span>`;
+        }
+        $('list').appendChild(li);
+      });
+      $('more').disabled = complete.length === sounds.length;
+      console.log('Tracks au format commun :', complete.map(toTrack));
+    }
+
+    function refresh() {
+      widget.getSounds((list) => { sounds = list; render(); });
+    }
+
+    // Le widget peut être "prêt" avant d'avoir reçu la liste : on réessaie plusieurs fois
+    function refreshWithRetry(attempt = 1, max = 8) {
+      widget.getSounds((list) => {
+        sounds = list;
+        render();
+        if (list.length === 0 && attempt < max) {
+          $('status').textContent = `Liste vide, nouvel essai ${attempt}/${max - 1}…`;
+          setTimeout(() => refreshWithRetry(attempt + 1, max), 1000);
+        } else if (list.length === 0) {
+          $('status').textContent =
+            "Toujours 0 titre : le widget ne semble pas accepter cette adresse. Coche « Afficher le widget » pour voir ce qu'il affiche.";
+        }
+      });
+    }
+
+    // Diagnostic : rendre le widget visible pour voir ce qu'il charge réellement
+    $('debug').onchange = (e) => {
+      $('sc-frame').classList.toggle('visible', e.target.checked);
+    };
+
+    $('load').onclick = () => {
+      const raw = $('source').value.trim();
+      // Un pseudo d'URL SoundCloud ne contient jamais d'espace (≠ nom affiché)
+      if (!raw.startsWith('http') && /\s/.test(raw)) {
+        $('status').textContent =
+          "Ceci ressemble à ton nom affiché, pas à ton pseudo d'URL (pas d'espace). Regarde l'adresse de ton profil : soundcloud.com/TON-PSEUDO";
+        return;
+      }
+      const url = buildSoundCloudUrl(raw);
+      $('status').textContent = `Chargement de ${url}…`;
+      const frame = $('sc-frame');
+      // On ne crée le widget qu'une fois (sinon les événements s'empilent à chaque clic).
+      // Les fois suivantes, on lui demande juste de charger une nouvelle adresse.
+      if (!widget) {
+        frame.src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=false`;
+        widget = SC.Widget(frame);
+        widget.bind(SC.Widget.Events.READY, () => refreshWithRetry());
+        widget.bind(SC.Widget.Events.ERROR, () => {
+          $('status').textContent = 'Erreur : le widget refuse cette URL.';
+        });
+      } else {
+        widget.load(url, { auto_play: false, callback: () => refreshWithRetry() });
+      }
+    };
+
+    // Astuce : sauter sur un titre non chargé force le widget à charger le paquet suivant
+    $('more').onclick = () => {
+      const idx = sounds.findIndex((s) => !s.title);
+      if (idx < 0) return;
+      widget.setVolume(0);
+      widget.skip(idx);
+      setTimeout(() => { widget.pause(); widget.setVolume(100); refresh(); }, 1500);
+    };
+  </script>
+</body>
+</html>
