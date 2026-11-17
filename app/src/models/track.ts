@@ -38,3 +38,11 @@ export function formatDuration(durationMs: number): string {
     ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
     : `${minutes}:${seconds}`;
 }
+
+/** Durée totale lisible d'une liste : "42 min" ; "3 h 05 min" */
+export function formatTotalDuration(tracks: Track[]): string {
+  const totalMinutes = Math.round(tracks.reduce((sum, t) => sum + t.durationMs, 0) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours} h ${String(minutes).padStart(2, '0')} min` : `${minutes} min`;
+}
