@@ -4,22 +4,25 @@ import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { SOUNDCLOUD_PLAYLIST_URL, SPOTIFY_CLIENT_ID } from './src/config';
-import { formatDuration, Track } from './src/models/track';
+import { formatDuration } from './src/models/track';
+import { usePlaylist } from './src/playlist/usePlaylist';
 import { SoundCloudLoader } from './src/soundcloud/SoundCloudLoader';
 import { fetchLikedTracks, SpotifyNotConnectedError } from './src/spotify/api';
 import { logout, spotifyRedirectUri } from './src/spotify/auth';
 import { useSpotifyLogin } from './src/spotify/useSpotifyLogin';
 
-// Écran temporaire pour vérifier les étapes 3 et 4 ; remplacé par la playlist commune (étape 6)
+// Écran temporaire pour vérifier les étapes 3 à 5 ; remplacé par le vrai écran playlist (étape 6)
 export default function App() {
+  // --- Playlist commune + cache (étape 5) ---
+  const playlist = usePlaylist();
+  const { setSpotify, setSoundCloud } = playlist;
+
   // --- SoundCloud (étape 3) ---
-  const [scTracks, setScTracks] = useState<Track[]>([]);
   const [scStatus, setScStatus] = useState('Chargement…');
   const [scReloadKey, setScReloadKey] = useState(0);
   const [scLoading, setScLoading] = useState(true);
 
   // --- Spotify (étape 4) ---
-  const [spTracks, setSpTracks] = useState<Track[]>([]);
   const [spStatus, setSpStatus] = useState('Vérification de la connexion…');
   const [spConnected, setSpConnected] = useState(false);
 
@@ -29,7 +32,7 @@ export default function App() {
       const list = await fetchLikedTracks((loaded, total) =>
         setSpStatus(`Chargement : ${loaded}/${total} titres…`),
       );
-      setSpTracks(list);
+      setSpotify(list);
       setSpConnected(true);
       setSpStatus(`${list.length} titres likés`);
     } catch (e) {
@@ -37,10 +40,11 @@ export default function App() {
         setSpConnected(false);
         setSpStatus('Non connecté');
       } else {
-        setSpStatus(`Erreur : ${(e as Error).message}`);
+        // Erreur réseau : la dernière liste Spotify en cache reste affichée
+        setSpStatus(`Erreur : ${(e as Error).message} (liste en cache affichée)`);
       }
     }
-  }, []);
+  }, [setSpotify]);
 
   const spotifyLogin = useSpotifyLogin(loadSpotify);
 
@@ -51,7 +55,7 @@ export default function App() {
 
   async function handleLogout() {
     await logout();
-    setSpTracks([]);
+    setSpotify([]);
     setSpConnected(false);
     setSpStatus('Non connecté');
   }
@@ -63,12 +67,16 @@ export default function App() {
     if (spConnected) loadSpotify();
   }
 
-  // Simple mise bout à bout ; la vraie fusion (tri, doublons) arrive à l'étape 5
-  const allTracks = [...spTracks, ...scTracks];
+  const lastUpdate = playlist.updatedAt
+    ? new Date(playlist.updatedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })
+    : 'jamais';
 
   return (
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>MusiqueProjet</Text>
+      <Text style={styles.status}>
+        {playlist.tracks.length} titres · mis à jour : {lastUpdate}
+      </Text>
 
       <Text style={styles.status}>🟢 Spotify : {spStatus}</Text>
       {!spConnected && (
@@ -108,7 +116,7 @@ export default function App() {
       </View>
 
       <FlatList
-        data={allTracks}
+        data={playlist.tracks}
         keyExtractor={(t) => t.id}
         renderItem={({ item }) => (
           <View style={styles.row}>
@@ -130,12 +138,12 @@ export default function App() {
           playlistUrl={SOUNDCLOUD_PLAYLIST_URL}
           onProgress={(loaded, total) => setScStatus(`${loaded}/${total} titres chargés…`)}
           onTracks={(list) => {
-            setScTracks(list);
+            setSoundCloud(list);
             setScStatus(`${list.length} titres`);
             setScLoading(false);
           }}
           onError={(message) => {
-            setScStatus(`Erreur : ${message}`);
+            setScStatus(`Erreur : ${message} (liste en cache affichée)`);
             setScLoading(false);
           }}
         />
